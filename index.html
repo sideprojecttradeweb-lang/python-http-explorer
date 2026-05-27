@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python HTTP Explorer & Dashboard</title>
+    <meta name="description" content="A premium, interactive web application exploring the HTTP protocol in real-time. Built entirely with Python's standard library.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Link to external stylesheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="glow-bg"></div>
+    <div class="glow-bg-secondary"></div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <span class="logo-icon">🐍</span>
+                <div class="title-meta">
+                    <h1>Python HTTP Explorer</h1>
+                    <p class="subtitle">Built with standard library <code>http.server</code></p>
+                </div>
+            </div>
+            <div class="server-status" id="serverStatusBadge">
+                <span class="status-indicator active"></span>
+                <span class="status-text">Server Active</span>
+            </div>
+        </header>
+
+        <!-- Dashboard Live Stats -->
+        <section class="stats-section" aria-label="Server Statistics">
+            <h2 class="section-title">📊 Live Server Metrics</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">⏱️</div>
+                    <div class="stat-info">
+                        <h3>Uptime</h3>
+                        <p class="stat-value" id="statUptime">0s</p>
+                        <span class="stat-subtext">Since server boot</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">📥</div>
+                    <div class="stat-info">
+                        <h3>Total Requests</h3>
+                        <p class="stat-value" id="statRequests">0</p>
+                        <span class="stat-subtext" id="statRps">0.0 req / sec</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">💻</div>
+                    <div class="stat-info">
+                        <h3>OS / Environment</h3>
+                        <p class="stat-value" id="statPlatform">Loading...</p>
+                        <span class="stat-subtext" id="statPythonVer">Python --</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">🕒</div>
+                    <div class="stat-info">
+                        <h3>Server Time</h3>
+                        <p class="stat-value" id="statTime">--:--:--</p>
+                        <span class="stat-subtext">In real-time</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Features Hub: Stock Watchlist & Company Hub -->
+        <section class="features-section" aria-label="Feature Watchlists">
+            <!-- Feature 1: Stock Watchlist -->
+            <div class="feature-card">
+                <div class="card-header-flex-features">
+                    <h2 class="card-title">📈 Stock Watchlist</h2>
+                    <button type="button" class="btn btn-secondary btn-sm" id="btnSyncStocks">🔄 Sync Market</button>
+                </div>
+                <p class="feature-desc">Monitor live pre-configured assets. Changes trigger server-side REST api calls.</p>
+                <div class="stocks-table-container">
+                    <table class="stocks-table">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Name</th>
+                                <th class="text-right">Price</th>
+                                <th class="text-right">Change</th>
+                            </tr>
+                        </thead>
+                        <tbody id="stocksList">
+                            <tr>
+                                <td colspan="4" class="text-center text-muted">Loading market data...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Feature 2: Afternoon Company Portal -->
+            <div class="feature-card">
+                <div class="card-header-flex-features">
+                    <h2 class="card-title">🏢 Afternoon Workplace</h2>
+                    <span class="status-badge" id="companyCheckinBadge">🕒 Standby</span>
+                </div>
+                <p class="feature-desc">Afternoon schedule & shift supervisor hub (Shift: 13:30 - 18:00).</p>
+                
+                <div class="company-grid">
+                    <div class="company-profile">
+                        <div class="company-meta">
+                            <h3 id="companyName">Loading company...</h3>
+                            <p class="company-role" id="companyRole">--</p>
+                            <div class="company-details">
+                                <p class="company-info"><span class="icon">📍</span> <span id="companyLoc">--</span></p>
+                                <p class="company-info"><span class="icon">⏰</span> <span id="companyShift">13:30 - 18:00</span></p>
+                            </div>
+                        </div>
+
+                        <div class="company-project">
+                            <div class="project-header">
+                                <span class="project-title" id="companyProject">Project --</span>
+                                <span class="project-pct" id="companyProgress">0%</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div class="progress-bar-fill" id="companyProgressBar" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Interactive Check-In -->
+                        <div class="checkin-container">
+                            <button type="button" class="btn btn-accent btn-sm" id="btnCheckin">🏢 Clock In to Office</button>
+                        </div>
+                    </div>
+
+                    <div class="company-schedule-container">
+                        <h4>Afternoon Task List</h4>
+                        <ul class="schedule-timeline" id="companySchedule">
+                            <div class="loading-spinner">Loading timeline...</div>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Main Workspace: HTTP Playground & Message Board -->
+        <main class="main-content">
+            <!-- Left Column: HTTP Request Constructor & Message Board -->
+            <div class="control-column">
+                
+                <!-- HTTP Request Playground Constructor -->
+                <section class="playground-card" aria-label="HTTP Request Constructor">
+                    <h2 class="card-title">🔌 HTTP Request Constructor</h2>
+                    <form id="httpForm" class="request-form">
+                        <div class="form-row">
+                            <div class="form-group method-group">
+                                <label for="reqMethod">Method</label>
+                                <select id="reqMethod">
+                                    <option value="GET">GET</option>
+                                    <option value="POST" selected>POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="DELETE">DELETE</option>
+                                </select>
+                            </div>
+                            <div class="form-group path-group">
+                                <label for="reqPath">Endpoint Path</label>
+                                <input type="text" id="reqPath" value="/api/echo" placeholder="/api/echo">
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Request Headers</label>
+                            <div class="headers-editor" id="headersEditor">
+                                <div class="header-row">
+                                    <input type="text" class="header-key" placeholder="Key" value="Content-Type">
+                                    <input type="text" class="header-val" placeholder="Value" value="application/json">
+                                </div>
+                                <div class="header-row">
+                                    <input type="text" class="header-key" placeholder="Key" value="Custom-Header">
+                                    <input type="text" class="header-val" placeholder="Value" value="PythonHTTPServerExplorer">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-group" id="bodyGroup">
+                            <label for="reqBody">Request Body (JSON)</label>
+                            <textarea id="reqBody" rows="4" placeholder='{\n  "message": "Hello from client!",\n  "status": "awesome"\n}'></textarea>
+                            <div class="textarea-actions">
+                                <button type="button" class="btn btn-secondary btn-sm" id="btnFormatJson">✨ Format JSON</button>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary" id="btnSubmitRequest">
+                            <span>⚡ Send HTTP Request</span>
+                        </button>
+                    </form>
+                </section>
+
+                <!-- Message Board -->
+                <section class="playground-card" aria-label="Server Message Board">
+                    <h2 class="card-title">💬 Dynamic Message Board (POST Demonstration)</h2>
+                    <form id="messageForm" class="message-form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="msgAuthor">Author</label>
+                                <input type="text" id="msgAuthor" placeholder="Your Name" value="Explorer User" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="msgContent">Message</label>
+                            <div class="input-with-button">
+                                <input type="text" id="msgContent" placeholder="Write something on the board..." required>
+                                <button type="submit" class="btn btn-accent">Send</button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <div class="messages-container">
+                        <div class="messages-list" id="messagesList">
+                            <!-- Populated dynamically -->
+                            <div class="loading-spinner">Loading messages...</div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Right Column: Raw HTTP Packet Inspector -->
+            <div class="inspector-column">
+                <section class="inspector-card" aria-label="HTTP Inspector Terminal">
+                    <div class="card-header-flex">
+                        <h2 class="card-title">🕵️ Raw HTTP Packet Inspector</h2>
+                        <span class="inspector-badge" id="latencyBadge">0ms</span>
+                    </div>
+                    <p class="inspector-desc">Observe the structural byte transmission of the HTTP protocol below in real-time.</p>
+
+                    <div class="terminal-container">
+                        <!-- Request Packet Terminal -->
+                        <div class="terminal-panel">
+                            <div class="terminal-header">
+                                <span class="terminal-title">📤 Outgoing Raw HTTP Request</span>
+                                <button class="btn-copy" data-target="rawRequestText">Copy</button>
+                            </div>
+                            <pre class="terminal-body" id="rawRequestText">Waiting to send request...</pre>
+                        </div>
+
+                        <!-- Response Packet Terminal -->
+                        <div class="terminal-panel">
+                            <div class="terminal-header">
+                                <span class="terminal-title">📥 Incoming Raw HTTP Response</span>
+                                <button class="btn-copy" data-target="rawResponseText">Copy</button>
+                            </div>
+                            <pre class="terminal-body" id="rawResponseText">Waiting to receive response...</pre>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>Designed with absolute visual excellence &bull; Powered by Python Standard Library 🐍</p>
+        </footer>
+    </div>
+
+    <!-- Main JavaScript Logic -->
+    <script src="app.js"></script>
+</body>
+</html>
