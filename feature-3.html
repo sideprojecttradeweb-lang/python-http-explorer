@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure S3 Storage Portal - Python HTTP Explorer</title>
+    <meta name="description" content="Securely upload files directly to AWS S3 using server-side generated pre-signed URLs.">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <!-- Link to external stylesheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="glow-bg"></div>
+    <div class="glow-bg-secondary"></div>
+
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <span class="logo-icon">☁️</span>
+                <div class="title-meta">
+                    <h1>S3 Storage Portal</h1>
+                    <p class="subtitle">Feature 3 &bull; Secure Direct S3 Uploads</p>
+                </div>
+            </div>
+            <nav class="nav-links">
+                <a href="/" class="btn btn-secondary btn-sm">🏠 Back to Dashboard</a>
+            </nav>
+        </header>
+
+        <!-- Main Content Grid -->
+        <main class="main-content">
+            <!-- Left Column: Uploader & Control Panel -->
+            <div class="control-column">
+                
+                <!-- S3 Upload Card -->
+                <section class="playground-card" aria-label="S3 File Upload Area">
+                    <h2 class="card-title">📤 S3 Secure Uploader</h2>
+                    <p class="feature-desc" style="margin-bottom: 1.25rem;">
+                        Files are uploaded directly from your browser to S3 via temporary Pre-signed URLs. Credentials never leave the server.
+                    </p>
+
+                    <!-- Drag & Drop Zone -->
+                    <div class="upload-dropzone" id="dropzone">
+                        <span class="upload-icon">📁</span>
+                        <div class="upload-text">
+                            <h3>Drag & Drop File Here</h3>
+                            <p>or click to browse from your device (Max 50MB)</p>
+                        </div>
+                        <input type="file" id="fileInput" class="file-input">
+                    </div>
+
+                    <!-- Selected File Details (Initially Hidden) -->
+                    <div class="upload-details-card" id="uploadDetails" style="display: none; margin-top: 1.5rem;">
+                        <div class="file-info-header">
+                            <span class="file-info-icon" id="fileIcon">📄</span>
+                            <div class="file-info-meta">
+                                <p class="file-info-name" id="fileName">file_name.ext</p>
+                                <p class="file-info-size" id="fileSize">0.00 KB</p>
+                            </div>
+                            <button type="button" class="btn btn-secondary btn-sm" id="btnCancelFile">Remove</button>
+                        </div>
+
+                        <!-- Progress Bar (Initially Hidden) -->
+                        <div class="upload-progress-container" id="progressContainer" style="display: none;">
+                            <div class="upload-progress-header">
+                                <span class="upload-status-text" id="uploadStatus">Uploading to S3...</span>
+                                <span class="upload-pct-text" id="uploadPct">0%</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div class="progress-bar-fill" id="progressBarFill" style="width: 0%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Upload Trigger Button -->
+                        <button type="button" class="btn btn-primary" id="btnStartUpload" style="width: 100%;">
+                            <span>⚡ Start Secure Upload</span>
+                        </button>
+                    </div>
+
+                    <!-- Upload Success Card (Initially Hidden) -->
+                    <div class="upload-success-link" id="successCard" style="display: none; margin-top: 1.5rem;">
+                        <div class="success-header">
+                            <span>✅ Upload Completed!</span>
+                        </div>
+                        <p class="success-body">
+                            The file was uploaded successfully to your S3 bucket. Click below to copy or view the S3 resource URL:
+                        </p>
+                        <div class="s3-url-input-group">
+                            <input type="text" id="s3UrlInput" readonly value="">
+                            <button type="button" class="btn btn-accent btn-sm" id="btnCopyS3Url">Copy Link</button>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Activity Log Console -->
+                <section class="playground-card" aria-label="Console Logs">
+                    <h2 class="card-title">💻 S3 Transaction Logs</h2>
+                    <p class="feature-desc" style="margin-bottom: 1rem;">
+                        Monitor real-time network requests and cryptographic signature verifications.
+                    </p>
+                    <div class="upload-console" id="consoleLogs">
+                        <div class="console-line info">
+                            <span class="console-time">[System]</span>
+                            <span class="console-msg">Console initialized. Ready to receive files...</span>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Right Column: S3 Bucket Architecture Info -->
+            <div class="inspector-column">
+                <!-- AWS Credential Configurator Card -->
+                <section class="inspector-card" aria-label="AWS Credentials Configuration" style="margin-bottom: 1.5rem;">
+                    <div class="card-header-flex">
+                        <h2 class="card-title">🔑 AWS Session Config</h2>
+                        <span class="status-badge" id="credStatusBadge">🕒 Checking...</span>
+                    </div>
+                    <p class="inspector-desc" style="margin-bottom: 1rem;">
+                        Provide temporary session Access Keys. These are configured in the server's process environment variables.
+                    </p>
+
+                    <!-- Unconfigured State Form -->
+                    <form id="credForm" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                        <div class="form-group">
+                            <label for="inputAccessKey" style="font-size: 0.75rem;">AWS Access Key ID</label>
+                            <input type="text" id="inputAccessKey" placeholder="AKIAIOSFODNN7EXAMPLE" required style="font-family: var(--font-mono); font-size: 0.78rem; padding: 8px 12px;">
+                        </div>
+                        <div class="form-group">
+                            <label for="inputSecretKey" style="font-size: 0.75rem;">AWS Secret Access Key</label>
+                            <input type="password" id="inputSecretKey" placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY" required style="font-family: var(--font-mono); font-size: 0.78rem; padding: 8px 12px; background: rgba(10, 15, 30, 0.8); border: 1px solid rgba(99, 102, 241, 0.2); border-radius: 8px; color: var(--text-primary); outline: none;">
+                        </div>
+                        <button type="submit" class="btn btn-accent btn-sm" id="btnSaveCreds" style="width: 100%; margin-top: 0.25rem;">
+                            <span>💾 Apply Credentials</span>
+                        </button>
+                    </form>
+
+                    <!-- Configured State Info (Initially Hidden) -->
+                    <div id="credActiveState" style="display: none; flex-direction: column; gap: 0.75rem;">
+                        <div class="company-schedule-container" style="background: rgba(16, 185, 129, 0.04); border-color: rgba(16, 185, 129, 0.15); padding: 0.75rem 1rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem;">
+                                <span style="color: var(--text-secondary);">Active Key ID:</span>
+                                <span id="activeKeyDisplay" style="font-family: var(--font-mono); color: var(--accent-green); font-weight: 600;">AKIA...5XYZ</span>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-secondary btn-sm" id="btnClearCreds" style="width: 100%;">
+                            <span>🗑️ Discard Credentials</span>
+                        </button>
+                    </div>
+                </section>
+
+                <section class="inspector-card" aria-label="S3 Bucket Metadata">
+                    <div class="card-header-flex">
+                        <h2 class="card-title">🔒 Security Architecture</h2>
+                        <span class="inspector-badge">ap-east-2</span>
+                    </div>
+                    <p class="inspector-desc">
+                        This interface communicates securely with AWS S3 under strict credential boundaries.
+                    </p>
+
+                    <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                        <!-- Parameter Table -->
+                        <div class="company-schedule-container" style="background: rgba(0, 0, 0, 0.25);">
+                            <h4 style="border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 8px;">Target Storage Specs</h4>
+                            <table style="width: 100%; font-size: 0.8rem; border-collapse: collapse; margin-top: 0.5rem;">
+                                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.03);">
+                                    <td style="padding: 8px 0; color: var(--text-secondary); font-weight: 500;">AWS Region</td>
+                                    <td style="padding: 8px 0; font-family: var(--font-mono); text-align: right; color: var(--accent-cyan);">ap-east-2 (Taipei)</td>
+                                </tr>
+                                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.03);">
+                                    <td style="padding: 8px 0; color: var(--text-secondary); font-weight: 500;">S3 Bucket</td>
+                                    <td style="padding: 8px 0; font-family: var(--font-mono); text-align: right;">ckc101-19-cliff</td>
+                                </tr>
+                                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.03);">
+                                    <td style="padding: 8px 0; color: var(--text-secondary); font-weight: 500;">Protocol</td>
+                                    <td style="padding: 8px 0; font-family: var(--font-mono); text-align: right;">HTTPS (TLS 1.3)</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 8px 0; color: var(--text-secondary); font-weight: 500;">Max File Size</td>
+                                    <td style="padding: 8px 0; font-family: var(--font-mono); text-align: right; color: var(--accent-red);">50.0 MB</td>
+                                </tr>
+                            </table>
+                        </div>
+
+                        <!-- Security Features Explained -->
+                        <div class="company-schedule-container" style="background: rgba(0, 0, 0, 0.25);">
+                            <h4 style="border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 8px;">Security Control List</h4>
+                            <ul class="schedule-timeline" style="gap: 0.75rem; margin-top: 0.5rem;">
+                                <li class="timeline-item">
+                                    <span class="timeline-time">🛡️</span>
+                                    <span class="timeline-task"><strong>Credential Isolation:</strong> AWS keys remain on server. Never exposed to browser scripts.</span>
+                                </li>
+                                <li class="timeline-item">
+                                    <span class="timeline-time">🔑</span>
+                                    <span class="timeline-task"><strong>Pre-Signed PUT:</strong> Granular, short-lived signatures valid for exactly 15 minutes.</span>
+                                </li>
+                                <li class="timeline-item">
+                                    <span class="timeline-time">🔀</span>
+                                    <span class="timeline-task"><strong>File Overwrite Protection:</strong> Automatic secure random prefix token hashing prevents overwrites.</span>
+                                </li>
+                                <li class="timeline-item">
+                                    <span class="timeline-time">⚠️</span>
+                                    <span class="timeline-task"><strong>MIME Type Integrity:</strong> Content-Type is bound inside the signature to prevent MIME sniffing.</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>Designed with absolute visual excellence &bull; Complies with AWS CIS Foundations Benchmark security standards 🔒</p>
+        </footer>
+    </div>
+
+    <!-- Page Specific Script -->
+    <script src="feature-3.js"></script>
+</body>
+</html>

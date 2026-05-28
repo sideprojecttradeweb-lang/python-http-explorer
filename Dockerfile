@@ -8,8 +8,12 @@ WORKDIR /app
 # 建立非 root 的系統使用者與群組以提高安全性
 RUN groupadd -r appuser && useradd -r -g appuser appuser
 
+# 複製依賴宣告並安裝
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
 # 複製專案檔案到工作目錄
-COPY server.py index.html style.css app.js ./
+COPY server.py index.html style.css app.js feature-3.html feature-3.js ./
 
 # 調整檔案擁有權為非 root 使用者
 RUN chown -R appuser:appuser /app
