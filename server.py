@@ -5,6 +5,18 @@ import platform
 import random
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.parse
+import string
+import secrets
+
+BOTO3_AVAILABLE = False
+try:
+    import boto3
+    from botocore.config import Config
+    from botocore.exceptions import ClientError
+    BOTO3_AVAILABLE = True
+except ImportError:
+    pass
+
 
 # Global server state
 START_TIME = time.time()
@@ -50,6 +62,69 @@ def get_fluctuated_stocks():
         stock["price"] = round(stock["price"] * (1 + delta / 100), 2)
         stock["change"] = round(stock["change"] + delta, 2)
     return STOCKS
+
+def sanitize_filename(filename):
+    """Sanitizes filename to prevent directory traversal and remove unsafe characters."""
+    if not filename:
+        return "unnamed_file"
+    
+    # Extract extension
+    base, ext = os.path.splitext(filename)
+    
+    # Allowed characters: alphanumeric, dot, dash, underscore
+    allowed_chars = set(string.ascii_letters + string.digits + ".-_")
+    
+    # Sanitize base
+    sanitized_base = "".join(c for c in base if c in allowed_chars).strip()
+    if not sanitized_base:
+        sanitized_base = "file"
+        
+    # Sanitize ext
+    sanitized_ext = "".join(c for c in ext if c in allowed_chars).strip()
+    
+    # Create secure random prefix to prevent overwriting
+    random_suffix = secrets.token_hex(4)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    
+    return f"uploads/{timestamp}_{random_suffix}_{sanitized_base}{sanitized_ext}"
+
+def generate_s3_presigned_url(bucket_name, object_name, region_name="ap-east-2", expiration=900, content_type=None):
+    """Generate a presigned URL to upload an S3 object securely using PUT"""
+    if not BOTO3_AVAILABLE:
+        return None, "boto3 library is not installed."
+        
+    # Check environment variables for credentials
+    access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+    secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+    if not access_key or not secret_key:
+        return None, "AWS credentials are not configured on the server. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
+
+    try:
+        # Configure client to use the specified region and signature version v4
+        s3_client = boto3.client(
+            's3',
+            region_name=region_name,
+            config=Config(signature_version='s3v4')
+        )
+        
+        # Build parameters for S3 Put Object
+        params = {
+            'Bucket': bucket_name,
+            'Key': object_name,
+        }
+        if content_type:
+            params['ContentType'] = content_type
+            
+        response = s3_client.generate_presigned_url(
+            'put_object',
+            Params=params,
+            ExpiresIn=expiration
+        )
+        return response, None
+    except ClientError as e:
+        return None, f"AWS ClientError: {str(e)}"
+    except Exception as e:
+        return None, f"Failed to generate upload URL: {str(e)}"
 
 class HTTPExplorerRequestHandler(BaseHTTPRequestHandler):
     
@@ -121,6 +196,25 @@ class HTTPExplorerRequestHandler(BaseHTTPRequestHandler):
             self.send_json_response(COMPANY)
             return
 
+        elif path == "/api/credentials/status":
+            access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+            secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+            
+            if access_key and secret_key:
+                # Mask key for security: e.g., show only first 4 and last 4 characters
+                masked_key = access_key[:4] + "*" * (len(access_key) - 8) + access_key[-4:] if len(access_key) > 8 else "****"
+                self.send_json_response({
+                    "configured": True,
+                    "aws_access_key_id": masked_key,
+                    "boto3_available": BOTO3_AVAILABLE
+                })
+            else:
+                self.send_json_response({
+                    "configured": False,
+                    "boto3_available": BOTO3_AVAILABLE
+                })
+            return
+
         # Handle static files
         elif path == "/" or path == "/index.html":
             self.serve_static_file("index.html", "text/html; charset=utf-8")
@@ -132,6 +226,14 @@ class HTTPExplorerRequestHandler(BaseHTTPRequestHandler):
             
         elif path == "/app.js":
             self.serve_static_file("app.js", "application/javascript; charset=utf-8")
+            return
+
+        elif path == "/feature-3" or path == "/feature-3.html":
+            self.serve_static_file("feature-3.html", "text/html; charset=utf-8")
+            return
+            
+        elif path == "/feature-3.js":
+            self.serve_static_file("feature-3.js", "application/javascript; charset=utf-8")
             return
 
         else:
@@ -151,7 +253,15 @@ class HTTPExplorerRequestHandler(BaseHTTPRequestHandler):
             content_length = 0
             
         body_bytes = self.rfile.read(content_length) if content_length > 0 else b""
-        body_str = body_bytes.decode("utf-8")
+        
+        # Safely decode body as string only if it is text-based (not binary proxy upload)
+        body_str = ""
+        if path != "/api/upload/proxy":
+            try:
+                body_str = body_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                body_str = ""
+
 
         # Route /api/echo: Echoes the exact raw request back to the client
         if path == "/api/echo":
@@ -178,6 +288,167 @@ class HTTPExplorerRequestHandler(BaseHTTPRequestHandler):
                 "is_json": is_json
             }
             self.send_json_response(response_data)
+            return
+
+        # Route /api/upload/presign: Generate pre-signed URL for S3 upload
+        elif path == "/api/upload/presign":
+            try:
+                data = json.loads(body_str) if body_str else {}
+                filename = data.get("filename", "").strip()
+                file_type = data.get("file_type", "").strip()
+                file_size = data.get("file_size", 0)
+
+                # Security Rule 1: Validate input fields
+                if not filename:
+                    self.send_json_response({"error": "Filename is required."}, status=400)
+                    return
+
+                # Security Rule 2: Limit file size (50MB)
+                max_size = 50 * 1024 * 1024
+                if file_size > max_size:
+                    self.send_json_response({"error": f"File size exceeds maximum limit of 50MB (got {file_size / 1024 / 1024:.1f}MB)."}, status=400)
+                    return
+
+                # Security Rule 3: Sanitize filename to prevent directory traversal
+                s3_key = sanitize_filename(filename)
+
+                # Security Rule 4: Check if boto3 library is available
+                if not BOTO3_AVAILABLE:
+                    self.send_json_response({
+                        "error": "The 'boto3' library is not installed on the server. Please run 'pip install boto3' to enable S3 uploads."
+                    }, status=501)
+                    return
+
+                # Security Rule 5: Generate the S3 presigned URL
+                bucket_name = "ckc101-19-cliff"
+                region_name = "ap-east-2"
+                
+                presigned_url, err_msg = generate_s3_presigned_url(
+                    bucket_name=bucket_name,
+                    object_name=s3_key,
+                    region_name=region_name,
+                    content_type=file_type if file_type else None
+                )
+
+                if err_msg:
+                    self.send_json_response({"error": err_msg}, status=500)
+                    return
+
+                # Success response: return the upload URL and S3 details
+                self.send_json_response({
+                    "success": True,
+                    "upload_url": presigned_url,
+                    "s3_key": s3_key,
+                    "bucket": bucket_name,
+                    "region": region_name,
+                    "file_url": f"https://{bucket_name}.s3.{region_name}.amazonaws.com/{s3_key}"
+                })
+
+            except Exception as e:
+                self.send_json_response({"error": f"Internal server error: {str(e)}"}, status=500)
+            return
+
+        # Route /api/upload/proxy: Proxy upload to S3 to bypass browser CORS
+        elif path == "/api/upload/proxy":
+            try:
+                # Read metadata from headers to keep payload simple
+                filename = urllib.parse.unquote(self.headers.get("X-File-Name", ""))
+                file_type = self.headers.get("X-File-Type", "")
+                
+                if not filename:
+                    self.send_json_response({"error": "X-File-Name header is required."}, status=400)
+                    return
+                
+                # Check file size (50MB)
+                if content_length > 50 * 1024 * 1024:
+                    self.send_json_response({"error": "File size exceeds 50MB limit."}, status=400)
+                    return
+                
+                # Check if boto3 library is available
+                if not BOTO3_AVAILABLE:
+                    self.send_json_response({
+                        "error": "The 'boto3' library is not installed on the server."
+                    }, status=501)
+                    return
+                
+                # Check credentials
+                access_key = os.environ.get("AWS_ACCESS_KEY_ID")
+                secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+                if not access_key or not secret_key:
+                    self.send_json_response({"error": "AWS credentials are not configured on the server."}, status=400)
+                    return
+
+                # Sanitize filename
+                s3_key = sanitize_filename(filename)
+                
+                # Upload to S3 on behalf of the client
+                bucket_name = "ckc101-19-cliff"
+                region_name = "ap-east-2"
+                
+                s3_client = boto3.client(
+                    's3',
+                    region_name=region_name,
+                    config=Config(signature_version='s3v4')
+                )
+                
+                s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    Body=body_bytes,
+                    ContentType=file_type if file_type else None
+                )
+                
+                self.send_json_response({
+                    "success": True,
+                    "s3_key": s3_key,
+                    "bucket": bucket_name,
+                    "region": region_name,
+                    "file_url": f"https://{bucket_name}.s3.{region_name}.amazonaws.com/{s3_key}"
+                })
+                
+            except Exception as e:
+                self.send_json_response({"error": f"Proxy upload failed: {str(e)}"}, status=500)
+            return
+
+        # Route /api/credentials/update: Temporarily configure AWS keys in memory
+        elif path == "/api/credentials/update":
+            try:
+                data = json.loads(body_str) if body_str else {}
+                access_key = data.get("aws_access_key_id", "").strip()
+                secret_key = data.get("aws_secret_access_key", "").strip()
+
+                if not access_key or not secret_key:
+                    self.send_json_response({"error": "Both AWS Access Key ID and Secret Access Key are required."}, status=400)
+                    return
+
+                # Save keys in os.environ for current running process session
+                os.environ["AWS_ACCESS_KEY_ID"] = access_key
+                os.environ["AWS_SECRET_ACCESS_KEY"] = secret_key
+
+                masked_key = access_key[:4] + "*" * (len(access_key) - 8) + access_key[-4:] if len(access_key) > 8 else "****"
+                self.send_json_response({
+                    "success": True,
+                    "message": "AWS credentials configured successfully in-memory.",
+                    "aws_access_key_id": masked_key
+                })
+            except Exception as e:
+                self.send_json_response({"error": f"Failed to update credentials: {str(e)}"}, status=500)
+            return
+
+        # Route /api/credentials/clear: Remove AWS keys from process memory
+        elif path == "/api/credentials/clear":
+            try:
+                if "AWS_ACCESS_KEY_ID" in os.environ:
+                    del os.environ["AWS_ACCESS_KEY_ID"]
+                if "AWS_SECRET_ACCESS_KEY" in os.environ:
+                    del os.environ["AWS_SECRET_ACCESS_KEY"]
+
+                self.send_json_response({
+                    "success": True,
+                    "message": "AWS credentials cleared from memory successfully."
+                })
+            except Exception as e:
+                self.send_json_response({"error": f"Failed to clear credentials: {str(e)}"}, status=500)
             return
 
         # Route /api/message: Add a message and return the updated message list
@@ -214,7 +485,27 @@ class HTTPExplorerRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Requested-With, Custom-Header")
         self.end_headers()
 
+def load_env_file():
+    """Loads environment variables from a local .env file if it exists."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if key:
+                        os.environ[key] = val
+            print("[*] Loaded environment variables from .env file successfully.")
+        except Exception as e:
+            print(f"[!] Warning: Failed to parse .env file: {str(e)}")
+
 def run_server(port=8000):
+    load_env_file()
     server_address = ("", port)
     
     # We use a standard socket server with port reuse allowed
