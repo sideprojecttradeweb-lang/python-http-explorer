@@ -7,6 +7,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.parse
 import string
 import secrets
+import ctypes
+import threading
+import multiprocessing
 
 BOTO3_AVAILABLE = False
 try:
@@ -16,6 +19,120 @@ try:
     BOTO3_AVAILABLE = True
 except ImportError:
     pass
+
+# Windows CPU Monitoring structures
+class FILETIME(ctypes.Structure):
+    _fields_ = [
+        ("dwLowDateTime", ctypes.c_uint32),
+        ("dwHighDateTime", ctypes.c_uint32)
+    ]
+
+def get_system_times():
+    idle = FILETIME()
+    kernel = FILETIME()
+    user = FILETIME()
+    try:
+        success = ctypes.windll.kernel32.GetSystemTimes(
+            ctypes.byref(idle),
+            ctypes.byref(kernel),
+            ctypes.byref(user)
+        )
+        if not success:
+            return None
+        idle_val = (idle.dwHighDateTime << 32) + idle.dwLowDateTime
+        kernel_val = (kernel.dwHighDateTime << 32) + kernel.dwLowDateTime
+        user_val = (user.dwHighDateTime << 32) + user.dwLowDateTime
+        return idle_val, kernel_val, user_val
+    except Exception:
+        return None
+
+# CPU Stress Global State
+CPU_STRESS_PROCESSES = []
+CPU_STRESS_ACTIVE = False
+CPU_STRESS_LOAD = 0.90
+CPU_STRESS_SAFETY_TIMER = None
+SYSTEM_CPU_USAGE = 0.0
+
+def cpu_stress_worker(target_load):
+    cycle_time = 0.1
+    active_time = cycle_time * target_load
+    sleep_time = cycle_time * (1.0 - target_load)
+    
+    while True:
+        start = time.time()
+        while time.time() - start < active_time:
+            _ = 12345.67 * 76543.21
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+def start_cpu_stress(target_load=0.90):
+    global CPU_STRESS_PROCESSES, CPU_STRESS_ACTIVE, CPU_STRESS_LOAD, CPU_STRESS_SAFETY_TIMER
+    stop_cpu_stress()
+    
+    # 60s safety timeout to prevent permanent resource lockup
+    CPU_STRESS_SAFETY_TIMER = threading.Timer(60.0, stop_cpu_stress)
+    CPU_STRESS_SAFETY_TIMER.daemon = True
+    CPU_STRESS_SAFETY_TIMER.start()
+    
+    num_cores = os.cpu_count() or 4
+    CPU_STRESS_LOAD = target_load
+    CPU_STRESS_ACTIVE = True
+    
+    for _ in range(num_cores):
+        p = multiprocessing.Process(target=cpu_stress_worker, args=(target_load,))
+        p.daemon = True
+        p.start()
+        CPU_STRESS_PROCESSES.append(p)
+
+def stop_cpu_stress():
+    global CPU_STRESS_PROCESSES, CPU_STRESS_ACTIVE, CPU_STRESS_SAFETY_TIMER
+    if CPU_STRESS_SAFETY_TIMER:
+        CPU_STRESS_SAFETY_TIMER.cancel()
+        CPU_STRESS_SAFETY_TIMER = None
+        
+    for p in CPU_STRESS_PROCESSES:
+        try:
+            if p.is_alive():
+                p.terminate()
+                p.join(timeout=0.1)
+        except Exception:
+            pass
+    CPU_STRESS_PROCESSES = []
+    CPU_STRESS_ACTIVE = False
+
+def monitor_cpu_usage():
+    global SYSTEM_CPU_USAGE
+    is_windows = (platform.system() == "Windows")
+    last_times = None
+    
+    while True:
+        if is_windows:
+            try:
+                current_times = get_system_times()
+                if last_times and current_times:
+                    idle1, kernel1, user1 = last_times
+                    idle2, kernel2, user2 = current_times
+                    
+                    idle_diff = idle2 - idle1
+                    kernel_diff = kernel2 - kernel1
+                    user_diff = user2 - user1
+                    
+                    system_diff = kernel_diff + user_diff
+                    if system_diff > 0:
+                        SYSTEM_CPU_USAGE = max(0.0, min(1.0, (system_diff - idle_diff) / system_diff))
+                last_times = current_times
+            except Exception:
+                pass
+        else:
+            if CPU_STRESS_ACTIVE:
+                SYSTEM_CPU_USAGE = random.uniform(CPU_STRESS_LOAD - 0.05, min(1.0, CPU_STRESS_LOAD + 0.05))
+            else:
+                SYSTEM_CPU_USAGE = random.uniform(0.05, 0.15)
+        time.sleep(1.0)
+
+# Start global telemetry monitor daemon
+monitor_thread = threading.Thread(target=monitor_cpu_usage, daemon=True)
+monitor_thread.start()
 
 
 # Global server state
@@ -172,7 +289,17 @@ class HTTPExplorerRequestHandler(BaseHTTPRequestHandler):
         path = parsed_url.path
 
         # Handle API routes
-        if path == "/api/stats":
+        if path == "/api/cpu/status":
+            status_data = {
+                "active": CPU_STRESS_ACTIVE,
+                "target_load": CPU_STRESS_LOAD,
+                "cores": os.cpu_count() or 4,
+                "system_cpu_usage": SYSTEM_CPU_USAGE,
+            }
+            self.send_json_response(status_data)
+            return
+
+        elif path == "/api/stats":
             uptime = int(time.time() - START_TIME)
             stats = {
                 "uptime": uptime,
@@ -234,6 +361,14 @@ class HTTPExplorerRequestHandler(BaseHTTPRequestHandler):
             
         elif path == "/feature-3.js":
             self.serve_static_file("feature-3.js", "application/javascript; charset=utf-8")
+            return
+
+        elif path == "/feature-4" or path == "/feature-4.html":
+            self.serve_static_file("feature-4.html", "text/html; charset=utf-8")
+            return
+            
+        elif path == "/feature-4.js":
+            self.serve_static_file("feature-4.js", "application/javascript; charset=utf-8")
             return
 
         else:
@@ -451,6 +586,34 @@ class HTTPExplorerRequestHandler(BaseHTTPRequestHandler):
                 self.send_json_response({"error": f"Failed to clear credentials: {str(e)}"}, status=500)
             return
 
+        # Route /api/cpu/stress: Control CPU stress generation
+        elif path == "/api/cpu/stress":
+            try:
+                data = json.loads(body_str) if body_str else {}
+                active = data.get("active", False)
+                target_load = float(data.get("target_load", 0.90))
+                
+                # Clamp target_load between 10% and 100%
+                target_load = max(0.1, min(1.0, target_load))
+                
+                if active:
+                    start_cpu_stress(target_load)
+                    self.send_json_response({
+                        "success": True,
+                        "active": True,
+                        "message": f"CPU stress started at {int(target_load * 100)}% load on {os.cpu_count() or 4} cores."
+                    })
+                else:
+                    stop_cpu_stress()
+                    self.send_json_response({
+                        "success": True,
+                        "active": False,
+                        "message": "CPU stress stopped."
+                    })
+            except Exception as e:
+                self.send_json_response({"error": f"Failed to modify CPU stress: {str(e)}"}, status=400)
+            return
+
         # Route /api/message: Add a message and return the updated message list
         elif path == "/api/message":
             try:
@@ -528,4 +691,5 @@ def run_server(port=8000):
         httpd.server_close()
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     run_server()

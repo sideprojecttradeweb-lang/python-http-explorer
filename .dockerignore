@@ -16,6 +16,9 @@ env/
 .idea/
 .gemini/
 
-# 忽略 Docker 相關檔案本身
+# 忽略 Docker 相關檔案與本地設定檔本身
 Dockerfile
 .dockerignore
+.env
+.env.example
+
